@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PaymentGateway.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 学习要点: Infrastructure 引用 Application 是为了实现其定义的接口(IUnitOfWork/IDomainEventDispatcher)
+         依赖方向: Infrastructure -> Application -> Domain -> Shared (依赖倒置) -->
+    <ProjectReference Include="..\PaymentGateway.Application\PaymentGateway.Application.csproj" />
+    <ProjectReference Include="..\PaymentGateway.Domain\PaymentGateway.Domain.csproj" />
+    <ProjectReference Include="..\PaymentGateway.Shared\PaymentGateway.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- ★ 学习要点: 基础设施层集中管理所有外部依赖
+       M1: SqlSugar + MySQL
+       M2 将添加: StackExchange.Redis, RedLockNet, ZooKeeperNetEx (分布式锁)
+       M3 将添加: Confluent.Kafka (事件总线)
+       M4 将添加: NetMQ (ZeroMQ), OpenTelemetry (链路追踪) -->
+  <ItemGroup>
+    <!-- SqlSugar ORM (MySQL 驱动 MySqlConnector 由 SqlSugar 间接依赖) -->
+    <PackageReference Include="SqlSugarCore" Version="5.1.4.187" />
+    <!-- 通用抽象(ILogger, IConfiguration, IOptions 等) -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
+    <!-- StackExchange.Redis 2.x: 兼容 .NET 8 + Logging.Abstractions 8.0.2
+         ⚠️ 注意 3.x 依赖 Logging.Abstractions 10.x 与 .NET 8 冲突,故降级使用 2.x
+         StackExchange.Redis 2.x 支持 Redis-Cluster (via ConnectionMultiplexer.Connect) -->
+    <PackageReference Include="StackExchange.Redis" Version="2.8.24" />
+    <!-- ZooKeeperNetEx: Apache ZooKeeper .NET 客户端,用于实现 ZK 分布式锁 -->
+    <PackageReference Include="ZooKeeperNetEx" Version="3.4.12.4" />
+    <!-- Confluent.Kafka: M3 事件总线生产者/消费者 (.NET 8 兼容稳定版) -->
+    <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
+    <!-- NetMQ: M4 ZeroMQ 通道通信 (REQ/REP + PUB/SUB) -->
+    <PackageReference Include="NetMQ" Version="4.0.1.13" />
+    <!-- OpenTelemetry: M4 链路追踪 (Jaeger via OTLP) -->
+    <PackageReference Include="OpenTelemetry" Version="1.9.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.9.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.9.0" />
+    <!-- ★ M6-3: Prometheus 指标暴露 (prometheus-net.AspNetCore 内含 /metrics 端点与 HTTP 仪表) -->
+    <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
+  </ItemGroup>
+
+</Project>

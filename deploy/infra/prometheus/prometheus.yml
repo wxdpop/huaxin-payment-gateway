@@ -1,0 +1,121 @@
+# ============================================================================
+# 华鑫融汇聚合支付网关 - Prometheus 采集配置 (M6-3 可观测性增强)
+# ============================================================================
+# 文件作用:
+#   Prometheus 是时序数据库 + 拉取式(pull)指标采集系统。
+#   本文件定义 Prometheus 启动后"去哪里、以什么频率、采集谁"。
+#   通过 docker-compose 把本文件挂载到容器 /etc/prometheus/prometheus.yml:
+#     prometheus:
+#       volumes:
+#         - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+#       command:
+#         - --config.file=/etc/prometheus/prometheus.yml
+#         - --storage.tsdb.path=/prometheus
+#
+# 工作模型(Pull 模型,区别于 StatsD/Prometheus pushgateway 的 Push):
+#   1. 应用通过 /metrics 端点以 Prometheus 文本格式暴露指标(OpenTelemetry.Exporter.Prometheus.AspNetCore)
+#   2. Prometheus 主动定时 HTTP GET 目标端点,抓取指标并写入本地 TSDB
+#   3. Grafana 查询 Prometheus 展示曲线
+#   优点: 应用无需知道监控系统地址,被采集方与采集方解耦;失败重试由 Prometheus 自管理
+#
+# 采集目标命名约定(容器网络内):
+#   payment-gateway:5000  -> 应用 API(本工程 docker-compose 中服务名 payment-gateway)
+#   prometheus:9090       -> Prometheus 自身(此处用 localhost,因为就是自己访问自己)
+#   全部位于 payment-net 自定义桥接网络,容器间通过服务名互访
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# global: 全局配置,对未在 job 级别覆盖的所有 scrape 生效
+# ----------------------------------------------------------------------------
+global:
+  # scrape_interval: 抓取间隔。15s 表示每 15 秒拉取一次目标 /metrics。
+  #   学习要点: 间隔越短,曲线越精细,但存储与查询压力越大。
+  #   生产经验: 核心服务 15s,边缘服务 30s~60s。本学习工程统一 15s 便于观察。
+  scrape_interval: 15s
+
+  # scrape_timeout: 单次抓取超时时间,必须 <= scrape_interval,否则会重叠。
+  #   未显式设置时默认取 10s。这里保持默认,留作学习说明。
+  # scrape_timeout: 10s
+
+  # evaluation_interval: 规则(Recording Rule / Alerting Rule)求值间隔。
+  #   本工程暂未配置告警规则,但保留默认 15s 以备 M6-4 扩展。
+  evaluation_interval: 15s
+
+# ----------------------------------------------------------------------------
+# alerting: 告警规则与 Alertmanager 连接(本工程 M6-3 暂未启用,留空占位)
+#   生产环境会指向独立 Alertmanager 服务(如 alertmanager:9093)
+# ----------------------------------------------------------------------------
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#             - alertmanager:9093
+
+# ----------------------------------------------------------------------------
+# rule_files: 告警/记录规则文件路径(本工程暂未使用)
+#   规则可预计算复杂 PromQL,降低 dashboard 实时查询压力
+# ----------------------------------------------------------------------------
+# rule_files:
+#   - /etc/prometheus/rules/*.yml
+
+# ----------------------------------------------------------------------------
+# scrape_configs: 采集目标列表 —— 本配置的核心
+#   每个 job_name 是一组逻辑同构的采集目标(如"所有 API 实例")
+# ----------------------------------------------------------------------------
+scrape_configs:
+
+  # ==========================================================================
+  # Job 1: 采集支付网关应用指标
+  # ==========================================================================
+  # 目标: payment-gateway 容器的 /metrics 端点(OpenTelemetry Prometheus exporter 暴露)
+  # 指标示例(由 M6-3 在代码中通过 System.Diagnostics.Metrics 定义):
+  #   - paymentgateway_orders_created_total      订单创建计数器
+  #   - paymentgateway_payments_total            支付发起计数器
+  #   - paymentgateway_callbacks_total           回调处理计数器(带 status label)
+  #   - paymentgateway_lock_acquire_total        分布式锁获取计数器(带 type/result label)
+  #   - paymentgateway_lock_acquire_duration_seconds_bucket  锁获取耗时直方图
+  #   - paymentgateway_account_credit_total      账户入账计数器
+  #   - http_requests_received_total             ASP.NET Core 自动埋点请求计数
+  #   - http_request_duration_seconds_bucket     ASP.NET Core 自动埋点请求耗时直方图
+  # ==========================================================================
+  - job_name: "payment-gateway"
+
+    # metrics_path: 抓取路径。Prometheus 默认 /metrics,这里显式声明便于学习。
+    #   对应代码中 app.UseOpenTelemetryPrometheusScrapingEndpoint() 暴露的端点。
+    metrics_path: /metrics
+
+    # scrape_interval: 本 job 覆盖全局间隔(此处与全局一致,演示覆盖语法)
+    # scrape_interval: 15s
+
+    # static_configs: 静态目标列表(适合固定单实例;动态多实例应改用 consul/dns 服务发现)
+    static_configs:
+      # targets: 采集目标地址,格式 host:port
+      #   payment-gateway:5000 —— 容器服务名:端口(同 payment-net 网络内可解析)
+      #   若 Prometheus 运行在宿主机而非容器,需改用 localhost:5000
+      - targets: ["payment-gateway:5000"]
+        # labels: 给本组目标附加静态标签,Grafana 可按标签过滤
+        #   学习要点: 多实例/多环境时通过 labels 区分(如 env=prod)
+        labels:
+          service: "payment-gateway"
+          env: "dev"
+
+  # ==========================================================================
+  # Job 2: 采集 Prometheus 自身指标(自监控)
+  # ==========================================================================
+  # 目的: 监控 Prometheus 自身健康(采集耗时、TSDB 内存占用、规则求值延迟等)
+  #   Prometheus 内置 exporter,在 /metrics 暴露自身运行指标。
+  #   学习要点: "谁来监控监控者" —— 可观测系统自身也需被观测,这是生产实践铁律。
+  # 地址说明:
+  #   这里用 localhost:9090 而非 prometheus:9090,因为这是 Prometheus 进程访问自身,
+    #   无需经过 Docker DNS 解析,localhost 更直接高效。
+  # ==========================================================================
+  - job_name: "prometheus"
+
+    # Prometheus 自身的默认采集路径也是 /metrics
+    metrics_path: /metrics
+
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+          env: "dev"

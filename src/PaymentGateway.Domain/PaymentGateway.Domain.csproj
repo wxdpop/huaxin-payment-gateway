@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 学习要点: 领域层"零外部依赖"是 DDD 的理想原则
+       本工程为简化教学,引用 SqlSugarCore 让实体直接用 [SugarTable]/[SugarColumn] 特性映射
+       严格 DDD 应在 Infrastructure 用 Mapping 配置类解耦,但会增加样板代码
+       折中: 选用特性映射,在注释中明确说明此取舍 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PaymentGateway.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PaymentGateway.Shared\PaymentGateway.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SqlSugar ORM: 实体特性映射(教学简化,严格 DDD 应放 Infrastructure) -->
+    <PackageReference Include="SqlSugarCore" Version="5.1.4.187" />
+  </ItemGroup>
+
+</Project>

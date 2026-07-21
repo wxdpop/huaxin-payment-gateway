@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 学习要点: TargetFramework=net8.0 表示编译为 .NET 8
+       ImplicitUsings 自动引入常用命名空间(System, System.Linq 等)
+       Nullable=enable 开启可空引用类型(编译期空检查,减少 NullReferenceException) -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PaymentGateway.Shared</RootNamespace>
+  </PropertyGroup>
+
+</Project>

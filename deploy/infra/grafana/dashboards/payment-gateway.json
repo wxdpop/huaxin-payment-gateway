@@ -1,0 +1,730 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "华鑫融汇聚合支付网关 - 可观测性监控面板 (M6-3)\n\n本面板由 deploy/infra/grafana/dashboards/payment-gateway.json 定义,经 Grafana Provisioning 自动加载。\n数据源: Prometheus (uid=prometheus),由 Prometheus 从 payment-gateway:5000/metrics 拉取。\n\n面板布局说明:\n  第1行: HTTP 入口流量指标(QPS / 延迟 P95) —— 反映网关入口健康度\n  第2行: 核心业务计数器(订单 / 支付 / 账户入账) —— Stat 单值卡片\n  第3行: 回调与分布式锁业务指标 —— 反映异步链路与临界区健康度\n  第4行: 锁获取耗时 P95 —— 分布式锁性能瓶颈观测\n\n指标命名约定:\n  http_*                      OpenTelemetry.AspNetCore 自动埋点(无需业务代码)\n  paymentgateway_*            业务自定义指标(System.Diagnostics.Metrics 定义)\n  *_total 后缀               Prometheus Counter 类型(单调递增)\n  *_bucket 后缀              Prometheus Histogram 类型(桶式分布,用于分位数计算)\n\nPromQL 学习要点:\n  rate(counter[1m])                          每秒增长率,把单调递增计数器转为 QPS\n  histogram_quantile(0.95, ..._bucket)       从直方图桶计算分位数(如 P95)\n  sum by (label) (...)                       按 label 聚合,生成多条曲线\n  increase(counter[5m])                      区间内增量(适合统计窗口事件数)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "HTTP 请求 QPS(每秒请求数)\n\n指标: http_requests_received_total (OpenTelemetry.AspNetCore 自动埋点 Counter)\nPromQL: sum by (method, controller) (rate(http_requests_received_total[1m]))\n\n说明:\n  - rate(...[1m]) 将单调递增的请求计数器转为"每秒速率",即 QPS\n  - 按 method(GET/POST...) + controller 分组,可定位哪个接口最繁忙\n  - 曲线突增可能预示流量峰值或被攻击,骤降可能预示服务不可用\n\n学习要点: Prometheus 的 rate() 会自动处理计数器重置(进程重启归零),无需手动处理",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "QPS",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ],
+            "unit": "reqps"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (method, controller) (rate(http_requests_received_total[1m]))",
+          "legendFormat": "{{method}} {{controller}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 请求 QPS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "HTTP 请求延迟 P95(95 分位数)\n\n指标: http_request_duration_seconds_bucket (Histogram 桶)\nPromQL: histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))\n\n说明:\n  - P95 表示 95% 的请求耗时低于此值,是衡量长尾延迟的核心指标\n  - 比"平均延迟"更能反映用户体验(平均值会被海量快请求拉低,掩盖慢请求)\n  - 按 route 分组,可定位哪个接口最慢\n\n学习要点:\n  - histogram_quantile 必须配合 rate() 使用,先算每桶速率再求分位数\n  - 必须按 le(桶上界)分组,否则分位数计算错误\n  - [5m] 窗口比 [1m] 更平滑,避免抖动;生产看趋势用 5m,排障用 1m",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "延迟",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ],
+            "unit": "s"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{route}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 请求延迟 P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "支付订单创建总数\n\n指标: paymentgateway_orders_created_total (业务自定义 Counter)\nPromQL: sum(paymentgateway_orders_created_total)\n\n说明:\n  - 累计创建的支付订单总数(单调递增)\n  - reduceOptions.calcs=lastNotNull 取最新值,即当前累计总数\n  - 配合时间序列可看增长速率(本面板用 Stat 仅展示当前值)\n\n业务含义:\n  订单是支付流程起点(下单 -> 发起支付 -> 渠道回调 -> 入账 -> 通知商户)\n  此值反映业务总量规模",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 100
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              }
+            ],
+            "unit": "short"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(paymentgateway_orders_created_total)",
+          "legendFormat": "订单创建总数",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "支付订单创建总数",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "支付发起总数\n\n指标: paymentgateway_payments_total (业务自定义 Counter)\nPromQL: sum(paymentgateway_payments_total)\n\n说明:\n  - 累计向渠道发起的支付请求数(单调递增)\n  - 与订单数对比可发现"下单未支付"的比例(支付转化漏斗)\n\n业务含义:\n  支付发起 = 调用上游渠道(微信/支付宝)发起真实支付\n  此值反映与外部渠道交互的频次",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 100
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              }
+            ],
+            "unit": "short"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(paymentgateway_payments_total)",
+          "legendFormat": "支付发起总数",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "支付发起总数",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "账户入账总数\n\n指标: paymentgateway_account_credit_total (业务自定义 Counter)\nPromQL: sum(paymentgateway_account_credit_total)\n\n说明:\n  - 累计账户入账(加钱)操作次数(单调递增)\n  - 入账发生在"渠道回调成功 -> 异步事件 -> 入账"链路末端\n  - 与支付发起数对比可发现"支付成功但未入账"的资金异常(需对账)\n\n业务含义:\n  入账 = 商户账户余额增加(贷方记账),是资金流闭环的终点\n  此值异常意味着资金风险,必须监控",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              }
+            ],
+            "unit": "short"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(paymentgateway_account_credit_total)",
+          "legendFormat": "账户入账总数",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "账户入账总数",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "回调处理总数(按状态分组)\n\n指标: paymentgateway_callbacks_total (业务自定义 Counter,带 status label)\nPromQL: sum by (status) (paymentgateway_callbacks_total)\n\n说明:\n  - 累计处理的渠道回调数,按 status(success/failed/pending 等)分组\n  - success 应占绝对多数;failed 突增意味着渠道异常或签名校验失败\n  - 时间序列展示累计值的增长曲线,斜率即回调速率\n\n业务链路:\n  渠道异步回调 -> 验签 -> 更新支付状态 -> 发布事件 -> 入账 -> 通知商户\n  回调失败会导致订单状态不一致,需告警介入",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "回调数",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ],
+            "unit": "short"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (status) (paymentgateway_callbacks_total)",
+          "legendFormat": "{{status}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "回调处理总数(按状态)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "锁获取成功/失败数(按 type + result 分组)\n\n指标: paymentgateway_lock_acquire_total (业务自定义 Counter,带 type/result label)\nPromQL: sum by (type, result) (paymentgateway_lock_acquire_total)\n\n说明:\n  - type: 锁类型(redis / zookeeper / dual)\n  - result: 获取结果(acquired / failed / timeout)\n  - failed/timeout 突增意味着锁竞争激烈或锁服务故障,可能引发并发安全问题\n\n业务背景:\n  本工程用 Redlock(Redis) + ZooKeeper 双锁保护资金账户余额变更临界区\n  锁失败率高 = 并发冲突严重,需排查热点账户或锁超时配置",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "次数",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ],
+            "unit": "short"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (type, result) (paymentgateway_lock_acquire_total)",
+          "legendFormat": "{{type}} {{result}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "锁获取成功/失败数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "锁获取耗时 P95(95 分位数)\n\n指标: paymentgateway_lock_acquire_duration_seconds_bucket (Histogram 桶)\nPromQL: histogram_quantile(0.95, sum by (le, type) (rate(paymentgateway_lock_acquire_duration_seconds_bucket[5m])))\n\n说明:\n  - 锁获取耗时 P95,按 type(redis/zookeeper/dual)分组\n  - P95 升高意味着锁服务响应变慢(Redis 网络抖动 / ZK 集群压力)\n  - 高耗时锁会拖慢整个交易链路,需设阈值告警\n\n学习要点:\n  - 锁耗时直方图比"平均耗时"更能反映长尾(99% 请求快但 1% 慢)\n  - dual 锁(同时取 Redis+ZK)耗时约等于两者较大值,可用于评估双锁策略代价",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "耗时",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ],
+            "unit": "s"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max", "mean"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, type) (rate(paymentgateway_lock_acquire_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{type}} P95",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "锁获取耗时 P95",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["payment-gateway", "M6-3", "可观测性", "prometheus"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "nowDelay": "",
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+  },
+  "timezone": "browser",
+  "title": "华鑫融汇聚合支付网关",
+  "uid": "payment-gateway",
+  "version": 1,
+  "weekStart": ""
+}

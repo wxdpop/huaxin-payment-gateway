@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PaymentGateway.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PaymentGateway.Domain\PaymentGateway.Domain.csproj" />
+    <ProjectReference Include="..\PaymentGateway.Shared\PaymentGateway.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- 学习要点: 本工程已移除 MediatR,采用"应用服务接口 + 实现"模式组织 CQRS
+       设计理由:
+         1. 单体+模块化架构中,模块间同步调用通过 IXXXService 接口直接注入即可
+            无需中介者模式额外抽象(应用服务本身就是中介者)
+         2. 显式接口更利于单元测试 Mock,且调用链路可读性更强(直接看到 Service 调用)
+         3. 减少第三方依赖,编译更快;未来拆分微服务时再引入 Http RPC 即可 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <!-- ILogger<T> 抽象,应用服务日志依赖 -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+</Project>

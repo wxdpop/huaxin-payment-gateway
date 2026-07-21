@@ -1,0 +1,331 @@
+# ============================================================================
+# 华鑫融汇聚合支付网关 - 中间件一键部署 docker-compose
+# ============================================================================
+# 说明:
+#   本文件定义支付网关学习工程所需的全部真实中间件(非 Mock)
+#   使用方式:
+#     docker-compose -f deploy/docker-compose.yml up -d        # 启动全部中间件
+#     docker-compose -f deploy/docker-compose.yml ps           # 查看运行状态
+#     docker-compose -f deploy/docker-compose.yml down         # 停止并移除容器
+#     docker-compose -f deploy/docker-compose.yml down -v      # 停止并删除数据卷(清空数据)
+#   前置条件:
+#     1. 已安装 Docker Desktop for Windows(WSL2 后端)
+#     2. 建议分配 8GB 内存 / 4 CPU
+#     3. 端口 7000-7005/9092/2181/16686/3000/9090 未被占用
+#     4. ★ 本机已运行 MySQL 8.0 (端口 3306, payment_gateway 数据库),不再通过 Docker 启动 MySQL
+#        如需用 Docker 启动 MySQL,请取消下方 mysql 服务的注释(并先停止本机 MySQL)
+# 数据库初始化:
+#   本工程假定本机已有 MySQL(payment_gateway 库已创建)
+#   init.sql 通过临时容器执行(避免容器内 MySQL 端口冲突):
+#     docker run --rm -v ${PWD}/deploy/infra/mysql/init.sql:/init.sql mysql:8.0 \
+#       mysql -h host.docker.internal -uroot -p123456 payment_gateway < /init.sql
+# 网络说明:
+#   所有容器接入自定义网络 payment-net,容器间通过服务名互访(如 redis-1:7000)
+#   ★ 注意: MySQL 在容器外运行,应用通过 host.docker.internal 或 127.0.0.1 连接
+# 学习要点:
+#   - depends_on: 仅保证启动顺序,不保证服务就绪
+#   - volumes: 持久化数据,down 不删除,down -v 才删除
+#   - healthcheck: 容器健康检查,便于编排工具判断就绪状态
+# ============================================================================
+# 注: version 字段在新版 docker compose 中已废弃,保留仅为兼容旧版
+# version: "3.9"
+
+# 自定义桥接网络: 容器间通过服务名通信(如 redis-1:7000)
+networks:
+  payment-net:
+    name: payment-net
+    driver: bridge
+
+# 数据卷定义: 持久化中间件数据,避免容器重建后数据丢失
+# (MySQL 数据卷已移除: MySQL 使用本机已运行实例)
+# volumes:
+#   mysqldata:
+#     name: payment-mysqldata
+
+
+services:
+
+  # --------------------------------------------------------------------------
+  # MySQL 8.0 - 业务数据库 (默认使用本机已运行的实例,故注释)
+  # --------------------------------------------------------------------------
+  # ★ 学习要点: 本工程假定本机已运行 MySQL 8.0 (端口 3306, payment_gateway 数据库)
+  #   若需通过 Docker 启动 MySQL,取消下方注释,并:
+  #     1. 停止本机 MySQL 服务 (net stop mysql / sc stop mysql80)
+  #     2. 重新启动 docker-compose
+  #   应用连接字符串已配置为 Server=localhost,容器化后改为 host.docker.internal
+  # --------------------------------------------------------------------------
+  # mysql:
+  #   image: mysql:8.0
+  #   container_name: payment-mysql
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3306:3306"
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: "123456"
+  #     MYSQL_DATABASE: payment_gateway
+  #     TZ: Asia/Shanghai
+  #   command:
+  #     - --character-set-server=utf8mb4
+  #     - --collation-server=utf8mb4_unicode_ci
+  #     - --default-authentication-plugin=mysql_native_password
+  #     - --max_connections=500
+  #   volumes:
+  #     - mysqldata:/var/lib/mysql
+  #     - ./infra/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+  #   networks:
+  #     - payment-net
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p123456"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 1 (端口 7000)
+  # 用途: Redlock 算法的独立 Redis 节点之一,承担分布式锁投票与缓存
+  # ★ 学习要点: 为什么用独立实例而非 Redis Cluster?
+  #   - Redlock 论文(Redis 作者 antirez 提出)要求 N 个"完全独立"的 Redis 实例
+  #     每个实例单独加锁,多数派成功才算获锁,避免单点故障
+  #   - Redis Cluster 在主从切换期间可能丢失 SET NX(主宕机,从未同步)
+  #   - ★ Docker Desktop for Windows (WSL2) 网络限制:
+  #     Cluster 模式下,StackExchange.Redis 通过 CLUSTER NODES 发现的节点地址是
+  #     容器内部 IP(172.18.0.x),宿主机无法访问。cluster-announce-ip 无法同时
+  #     满足容器间和宿主机访问(127.0.0.1 容器内指向自己,hostname 不被 Redis 接受)
+  #     因此开发环境改用 6 个独立实例,完全符合 Redlock 论文,无拓扑发现问题
+  # --------------------------------------------------------------------------
+  redis-1:
+    image: redis:7-alpine
+    container_name: payment-redis-1
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    command: redis-server --port 7000 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 2 (端口 7001)
+  # --------------------------------------------------------------------------
+  redis-2:
+    image: redis:7-alpine
+    container_name: payment-redis-2
+    restart: unless-stopped
+    ports:
+      - "7001:7001"
+    command: redis-server --port 7001 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 3 (端口 7002)
+  # --------------------------------------------------------------------------
+  redis-3:
+    image: redis:7-alpine
+    container_name: payment-redis-3
+    restart: unless-stopped
+    ports:
+      - "7002:7002"
+    command: redis-server --port 7002 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 4 (端口 7003)
+  # --------------------------------------------------------------------------
+  redis-4:
+    image: redis:7-alpine
+    container_name: payment-redis-4
+    restart: unless-stopped
+    ports:
+      - "7003:7003"
+    command: redis-server --port 7003 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 5 (端口 7004)
+  # --------------------------------------------------------------------------
+  redis-5:
+    image: redis:7-alpine
+    container_name: payment-redis-5
+    restart: unless-stopped
+    ports:
+      - "7004:7004"
+    command: redis-server --port 7004 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Redis 独立实例 6 (端口 7005)
+  # --------------------------------------------------------------------------
+  redis-6:
+    image: redis:7-alpine
+    container_name: payment-redis-6
+    restart: unless-stopped
+    ports:
+      - "7005:7005"
+    command: redis-server --port 7005 --appendonly yes
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # ZooKeeper - 分布式协调服务
+  # 用途: 资金账户分布式锁(临时顺序节点,CP 强一致性)
+  #       比 Redis 锁更强的安全性,用于账户余额变更临界区
+  # 端口: 2181
+  # --------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: payment-zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181              # ZK 客户端连接端口
+      ZOOKEEPER_TICK_TIME: 2000                # 基本时间单元(毫秒),用于心跳与超时
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Kafka - 事件总线(单节点)
+  # 用途: 异步事件驱动(回调->记账->通知商户),实现解耦与异步处理
+  #       主题: 订单创建/回调到达/账户变更/商户通知/死信队列
+  # 端口: 9092(宿主机与容器内均可访问)
+  # 依赖: zookeeper(Kafka 元数据存储于 ZK)
+  # 环境变量说明:
+  #   KAFKA_BROKER_ID: broker 唯一标识(单节点为 1)
+  #   KAFKA_ZOOKEEPER_CONNECT: ZK 连接地址
+  #   KAFKA_ADVERTISED_LISTENERS: 对外广播地址(同时支持容器内 kafka:9092 与宿主机 localhost:9092)
+  #   KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 内部 topic 副本数(单节点必须为 1)
+  # --------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: payment-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # 双监听器: INTERNAL 供容器间通信(kafka:9092),EXTERNAL 供宿主机访问(localhost:29092)
+      # 学习要点: KAFKA_ADVERTISED_LISTENERS 格式为 "名称://host:port",逗号分隔多个
+      #   错误写法: PLAINTEXT://kafka:9092,localhost:9092 (localhost 被当成协议名解析失败)
+      #   正确写法: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+                                          # 单节点必须设为 1(否则内部 topic 创建失败)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+                                          # 自动创建 Topic(学习工程便利,生产应关闭手动管理)
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Jaeger - 链路追踪(OpenTelemetry 后端)
+  # 用途: 接收 OTLP 协议的 Trace 数据,提供 Web UI 查看全链路调用
+  #       跟踪 HTTP->EFCore->Redis->Kafka 等跨组件调用链
+  # 端口: 16686(Web UI) / 4317(OTLP gRPC 上报端口)
+  # 环境变量: COLLECTOR_OTLP_ENABLED=true 开启 OTLP 协议接收
+  # --------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    container_name: payment-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"                        # Web UI: 浏览器访问 http://localhost:16686
+      - "4317:4317"                          # OTLP gRPC: 应用上报 Trace 数据端口
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"         # 启用 OTLP 协议接收(应用通过此协议上报)
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Grafana - 监控可视化面板
+  # 用途: 数据源连接 Prometheus,展示应用指标(QPS/延迟/错误率等)
+  # 端口: 3000(Web UI)
+  # 默认账号: admin / admin(首次登录提示修改密码)
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: payment-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin      # 管理员密码(学习工程简化)
+    # ★ M6-3: 挂载 provisioning(数据源/仪表盘提供者)与 dashboards(JSON 面板)
+    #   Grafana 启动时自动加载,免手动在 UI 配置(基础设施即代码)
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # Prometheus - 指标采集与时序存储
+  # 用途: 定时抓取应用暴露的 /metrics 端点,存储时序指标供 Grafana 展示
+  # 端口: 9090(Web UI 与 API)
+  # ★ M6-3: 挂载 prometheus.yml 配置抓取目标(payment-gateway:5000/metrics)
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: payment-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - payment-net
+
+  # --------------------------------------------------------------------------
+  # ★ payment-gateway - 聚合支付网关 API 服务 (应用本身)
+  # --------------------------------------------------------------------------
+  # ★ 学习要点: 应用容器化的核心 —— 把应用本身也纳入 docker-compose 编排
+  #   1. build: 用本仓库 deploy/Dockerfile 多阶段构建,context 为项目根目录
+  #   2. depends_on + condition —— 等中间件启动后再启动 API
+  #      (本工程中间件未配 healthcheck,故用 service_started; 若配了健康检查
+  #       可用 service_healthy 等"就绪"而非"启动",更严格)
+  #   3. ASPNETCORE_ENVIRONMENT=Docker: 触发加载 appsettings.Docker.json
+  #      (容器内用服务名 redis-1/zookeeper/kafka 互访,而非 localhost)
+  #   4. host.docker.internal: 容器访问宿主机 MySQL 的特殊 DNS
+  #   5. ZeroMq PubSub 监听 5556 端口仅在容器内,不映射到宿主机避免冲突
+  # --------------------------------------------------------------------------
+  payment-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: payment-gateway:latest
+    container_name: payment-gateway
+    restart: unless-stopped
+    ports:
+      - "5000:5000"                            # API 端口: 宿主机访问 http://localhost:5000
+    depends_on:
+      redis-1:
+        condition: service_started
+      redis-2:
+        condition: service_started
+      redis-3:
+        condition: service_started
+      redis-4:
+        condition: service_started
+      redis-5:
+        condition: service_started
+      redis-6:
+        condition: service_started
+      zookeeper:
+        condition: service_started
+      kafka:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Docker"          # 触发加载 appsettings.Docker.json
+      TZ: Asia/Shanghai                         # 容器时区,日志时间正确
+    networks:
+      - payment-net

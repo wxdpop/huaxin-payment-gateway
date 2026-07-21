@@ -1,0 +1,67 @@
+# ============================================================================
+# 华鑫融汇聚合支付网关 - Grafana 数据源自动配置 (M6-3 可观测性增强)
+# ============================================================================
+# 文件作用:
+#   通过 Grafana 的 "Provisioning" 机制,在启动时自动加载数据源配置,
+#   免去首次登录后手动添加数据源的步骤(学习工程尤其需要"开箱即用")。
+#
+# Provisioning 机制说明:
+#   Grafana 启动时会扫描 /etc/grafana/provisioning 下的两个子目录:
+#     - datasources/  -> 数据源自动配置(本文件所在目录)
+#     - dashboards/   -> dashboard provider 自动配置(见同级 dashboards/dashboard.yml)
+#   每个目录下的 .yml/.yaml 文件都会被加载。本文件通过 docker-compose 挂载:
+#     grafana:
+#       volumes:
+#         - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+#         - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+#
+# 学习要点:
+#   1. Provisioning 是 Grafana 推荐的"配置即代码"方式,适合版本化管理
+#      手动在 UI 添加的数据源不进版本库,环境重建即丢失;Provisioning 可重现
+#   2. deleteDatasibles 与 datasources 字段控制"增删改"行为:
+#        deleteDatasources: 启动时先按 name 删除冲突数据源(避免 UI 改动残留)
+#        datasources:       再创建/更新下列数据源
+#   3. access: proxy 表示 Grafana 后端代理请求(浏览器不直连 Prometheus)
+#      生产推荐 proxy;若选 browser 则浏览器跨域直连,需 CORS 且暴露 Prometheus 端口
+#   4. uid: 全局唯一标识,dashboard JSON 通过 uid 引用数据源(而非 name),
+#      这样改名不影响 dashboard 关联,是 Grafana 推荐的稳定引用方式
+# ============================================================================
+
+# 启动时先删除可能存在的同名数据源(清理 UI 手动添加的残留,保证幂等)
+apiVersion: 1
+
+deleteDatasources:
+  - name: Prometheus           # 按名称匹配删除(UI 显示名)
+    orgId: 1                   # 组织 ID,默认 1(单组织模式)
+
+# 数据源定义列表:启动后自动创建/更新
+datasources:
+  # --------------------------------------------------------------------------
+  # 数据源: Prometheus —— 唯一默认数据源
+  # --------------------------------------------------------------------------
+  - name: Prometheus                          # UI 中显示的数据源名称
+    uid: prometheus                           # ★ 稳定唯一标识,dashboard JSON 用此 uid 引用
+    orgId: 1                                  # 所属组织 ID(默认 1)
+    type: prometheus                          # 数据源类型(对应 Grafana 内置 prometheus 插件)
+    typeName: Prometheus                      # 类型显示名(Grafana 7+ 字段,可选)
+    access: proxy                             # proxy=Grafana 后端代理请求(推荐);browser=前端直连
+    url: http://prometheus:9090               # ★ Prometheus 地址(容器网络内服务名:端口)
+    user: ""                                  # Basic Auth 用户名(Prometheus 默认无认证,留空)
+    database: ""                              # Prometheus 无库概念,留空(适用于 SQL 类数据源)
+    basicAuth: false                          # 是否启用 Basic 认证
+    basicAuthUser: ""                         # Basic Auth 用户名
+    basicAuthPassword: ""                     # Basic Auth 密码(生产应走 secrets)
+    withCredentials: false                    # 是否携带跨域凭证 cookie
+    isDefault: true                           # ★ 设为默认数据源,新建面板时自动选中
+    jsonData:                                 # 类型特定参数(Prometheus 插件选项)
+      httpMethod: POST                        # 查询 HTTP 方法:POST 避免 URL 过长(大批量指标时 GET 截断)
+      timeInterval: 15s                       # 数据步进,建议与 Prometheus scrape_interval 一致
+                                              #   避免 Grafana 步进 < 采集间隔时出现空点
+      tlsAuth: false                          # 是否启用客户端证书 TLS 认证
+      tlsAuthWithCACert: false                # 是否使用自定义 CA 证书
+    secureJsonData:                           # 敏感字段(写入后 Grafana 加密存储,UI 不可见)
+      tlsCACert: ""                           # 自定义 CA 证书内容
+      tlsClientCert: ""                       # 客户端证书内容
+      tlsClientKey: ""                        # 客户端私钥内容
+    version: 1                                # 配置版本号(Provisioning 内部用,递增触发更新)
+    editable: true                            # UI 是否允许手动编辑(学习工程允许,便于调试)

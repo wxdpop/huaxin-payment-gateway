@@ -1,0 +1,39 @@
+# ============================================================================
+# .dockerignore - 排除本地文件进入 Docker 构建上下文
+# ============================================================================
+# 学习要点 - 为什么必须配 .dockerignore:
+#   ① 排除本地 bin/obj: 本地 Windows build 生成的 project.assets.json 含 Windows
+#      专属路径(如 C:\Program Files (x86)\...\NuGetPackages),容器内 Linux 找不到
+#      该路径,会导致 dotnet publish 报 NuGet.PackagingException
+#   ② 减小构建上下文: 不必要的文件不传给 daemon,加快构建
+#   ③ 避免缓存失效: 本地 git/ide 配置变更不影响层缓存
+# ============================================================================
+
+# === .NET 构建产物(关键: 避免本地 project.assets.json 污染容器 restore) ===
+**/bin/
+**/obj/
+
+# === IDE / 编辑器 ===
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# === Git ===
+.git/
+.gitignore
+.gitattributes
+
+# === 文档与脚本(构建镜像无需) ===
+docs/
+*.md
+deploy/infra/
+
+# === 测试项目(镜像只构建 API,不需测试代码) ===
+tests/
+
+# === 本地运行时文件 ===
+*.log
+*.tmp
+appsettings.Development.json

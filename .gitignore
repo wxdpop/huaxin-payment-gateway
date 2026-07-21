@@ -1,0 +1,31 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.log
+*.vs/
+.vs/
+
+## IDE
+.idea/
+*.swp
+*~
+
+## NuGet
+*.nupkg
+**/packages/
+
+## Test Results
+TestResults/
+
+## Docker (local build artifacts)
+*.tar
+
+## OS
+Thumbs.db
+.DS_Store
+
+## Environment
+appsettings.Development.json

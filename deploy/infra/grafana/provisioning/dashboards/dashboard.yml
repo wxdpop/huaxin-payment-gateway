@@ -1,0 +1,56 @@
+# ============================================================================
+# 华鑫融汇聚合支付网关 - Grafana Dashboard Provider 自动配置 (M6-3)
+# ============================================================================
+# 文件作用:
+#   定义"dashboard provider"——告诉 Grafana 从哪个目录自动加载 dashboard JSON 文件。
+#   配合 datasources/datasource.yml 完成数据源 + 面板的"开箱即用"。
+#
+# Dashboard Provider 机制说明:
+#   1. Grafana 启动时扫描 /etc/grafana/provisioning/dashboards/*.yml
+#   2. 每个 provider 声明一个"来源目录"与加载选项
+#   3. Grafana 读取来源目录下所有 .json,自动导入为 dashboard
+#   4. 后续若 JSON 文件变化,Grafana 会感知并更新(默认每 10s 扫描一次)
+#
+# 目录挂载约定(在 docker-compose.yml 中配置):
+#     grafana:
+#       volumes:
+#         - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+#         - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+#   即: 宿主机 deploy/infra/grafana/dashboards/*.json
+#       -> 容器 /var/lib/grafana/dashboards/*.json (本 provider 的 options.path)
+#
+# 学习要点:
+#   - folder: dashboard 在 Grafana UI 中的归档文件夹(不存在则自动创建)
+#   - type: file 表示从文件系统读取(另支持 grafana-api / dashboard-json 等来源)
+#   - options.path: 容器内 JSON 文件所在目录(必须是容器路径,非宿主机路径)
+#   - allowUiUpdates: false(默认)表示 UI 修改不回写文件,保持"配置即代码"单一真源
+#     学习工程设 true 便于在 UI 调试后导出回填,但要注意手动改 JSON 与 UI 改动可能冲突
+#   - updateIntervalSeconds: 扫描间隔,默认 10s;过大改动感知慢,过小增加 IO
+#   - folderUid: 指定文件夹 UID(不填则按 folder 名称匹配/创建)
+# ============================================================================
+
+apiVersion: 1
+
+# providers: dashboard 提供者列表,可配置多个(如分别从不同目录加载)
+providers:
+  # --------------------------------------------------------------------------
+  # Provider: 支付网关面板提供者
+  # --------------------------------------------------------------------------
+  - name: payment-gateway-dashboards           # provider 名称(仅内部标识,UI 不可见)
+    orgId: 1                                   # 所属组织 ID(默认 1)
+    folder: 支付网关                            # ★ UI 中归档文件夹名(支持中文,不存在自动创建)
+    folderUid: null                            # 文件夹 UID(null 则按 folder 名匹配/创建)
+    type: file                                 # 来源类型: file=文件系统读取
+    disableDeletion: false                     # false=JSON 删除时同步删除 UI 面板
+                                                #   学习工程设 false 便于清理;生产可设 true 防误删
+    allowUiUpdates: true                       # true=允许 UI 修改并回写文件(学习调试用)
+                                                #   生产建议 false,保持 JSON 为单一真源
+    updateIntervalSeconds: 10                  # 扫描间隔(秒),每 10s 检查目录变更
+    options:
+      # path: ★ 容器内 dashboard JSON 所在目录
+      #   对应 docker-compose 挂载的 /var/lib/grafana/dashboards
+      #   宿主机侧为 deploy/infra/grafana/dashboards/
+      path: /var/lib/grafana/dashboards
+      # foldersFromFilesStructure: true 时按 JSON 文件子目录结构创建子文件夹
+      #   本工程所有面板放同一目录,设 false 平铺加载
+      foldersFromFilesStructure: false
