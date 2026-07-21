@@ -9,4 +9,8 @@
   <Folder Name="/tests/">
     <Project Path="tests/PaymentGateway.Domain.Tests/PaymentGateway.Domain.Tests.csproj" />
   </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/MtBridge.Server/MtBridge.Server.csproj" />
+    <Project Path="examples/MtBridge.Client/MtBridge.Client.csproj" />
+  </Folder>
 </Solution>
