@@ -1,5 +1,4 @@
 using PaymentGateway.Api.Consumers;
-using PaymentGateway.Api.Endpoints;
 using PaymentGateway.Api.Middleware;
 using PaymentGateway.Application;
 using PaymentGateway.Application.Abstractions;
@@ -71,6 +70,11 @@ else
 //   M4 阶段会通过 AspNetCore.HealthChecks.Npgsql 包加入 DB 健康检查
 builder.Services.AddHealthChecks();
 
+// ★ 控制器注册(原 Minimal API 改为传统 Controller)
+//   学习要点: AddControllers() 注册 ControllerFeature + 模型绑定 + API 探索器
+//   相比 Minimal API 的 MapXxxEndpoints,Controller 自动扫描 Controllers 命名空间下的类
+builder.Services.AddControllers();
+
 // CORS: 学习工程全开放,生产环境应限制来源域名
 builder.Services.AddCors(opt =>
     opt.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
@@ -132,14 +136,11 @@ app.MapHealthChecks("/health/ready");
 //   暴露的指标包括: http_* (自动) + paymentgateway_* (PaymentMetrics 自定义)
 app.MapMetrics("/metrics");
 
-// 订单端点
-app.MapOrderEndpoints();
-
-// ★ M5: 支付端点(发起支付/渠道回调/退款)
-app.MapPaymentEndpoints();
-
-// ★ M5: 账户端点(查询余额)
-app.MapAccountEndpoints();
+// ★ Controller 路由映射(替代原 MapOrderEndpoints/MapPaymentEndpoints/MapAccountEndpoints)
+//   学习要点: MapControllers 自动扫描所有 [ApiController] 装饰的 Controller
+//     Controller 的 [Route]/[HttpGet]/[HttpPost] 特性定义路由
+//     优势: 业务逻辑集中在 Controller 类中,便于单元测试、AOP 拦截、Swagger 分组
+app.MapControllers();
 
 // 根路径欢迎信息(便于浏览器快速验证服务运行)
 app.MapGet("/", () => new
