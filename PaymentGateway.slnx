@@ -12,5 +12,6 @@
   <Folder Name="/examples/">
     <Project Path="examples/MtBridge.Server/MtBridge.Server.csproj" />
     <Project Path="examples/MtBridge.Client/MtBridge.Client.csproj" />
+    <Project Path="examples/SagaDemo/SagaDemo.csproj" />
   </Folder>
 </Solution>
