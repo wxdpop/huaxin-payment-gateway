@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>ZooKeeperDemo</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ZooKeeperNetEx" Version="3.4.12.4" />
+  </ItemGroup>
   <!--
     学习要点:
     1. 不依赖真实 ZK 也能跑(用 InMemoryZooKeeper 模拟)

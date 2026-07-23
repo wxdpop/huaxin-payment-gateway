@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>KafkaDemo</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="2.15.0" />
+  </ItemGroup>
   <!--
     学习要点:
     1. 不依赖真实 Kafka 也能跑(用 InMemoryKafka 模拟)
