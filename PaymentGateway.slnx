@@ -13,5 +13,7 @@
     <Project Path="examples/MtBridge.Server/MtBridge.Server.csproj" />
     <Project Path="examples/MtBridge.Client/MtBridge.Client.csproj" />
     <Project Path="examples/SagaDemo/SagaDemo.csproj" />
+    <Project Path="examples/ZooKeeperDemo/ZooKeeperDemo.csproj" />
+    <Project Path="examples/KafkaDemo/KafkaDemo.csproj" />
   </Folder>
 </Solution>

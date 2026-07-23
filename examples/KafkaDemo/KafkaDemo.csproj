@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>KafkaDemo</RootNamespace>
+  </PropertyGroup>
+  <!--
+    学习要点:
+    1. 不依赖真实 Kafka 也能跑(用 InMemoryKafka 模拟)
+    2. 提供 IKafkaClient 抽象,生产可换 Confluent.Kafka
+    3. 演示核心概念:Topic/Partition/Producer/Consumer/ConsumerGroup
+  -->
+</Project>
